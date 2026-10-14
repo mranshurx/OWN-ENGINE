@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.CyberEngine" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/cyber_cyan</item>
+        <item name="colorAccent">@color/cyber_cyan</item>
+        <item name="android:windowBackground">@color/cyber_bg</item>
+    </style>
+</resources>
