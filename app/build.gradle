@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.cyberengine'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.cyberengine"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    def ksPath = System.getenv("KEYSTORE_PATH") ?: "keystore.jks"
+
+    signingConfigs {
+        release {
+            if (file(ksPath).exists()) {
+                storeFile file(ksPath)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig file(ksPath).exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    buildFeatures { viewBinding true }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
+}
+
+// Bake il2cpp-replace/ into the APK assets on every build
+tasks.register('stageIl2cpp', Copy) {
+    from rootProject.file('il2cpp-replace')
+    into file('src/main/assets/il2cpp-replace')
+    exclude '**/*.md', '**/*.txt'
+}
+tasks.named('preBuild').configure { dependsOn 'stageIl2cpp' }
