@@ -1,22 +1,30 @@
 package com.cyberengine
 
-import android.app.*
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.*
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlin.math.abs
 
 class FloatingService : Service() {
 
+    private val main = Handler(Looper.getMainLooper())
     private lateinit var wm: WindowManager
     private var bubble: View? = null
     private var panel: View? = null
@@ -25,7 +33,8 @@ class FloatingService : Service() {
     private val overlayType: Int
         get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else WindowManager.LayoutParams.TYPE_PHONE
+        else
+            WindowManager.LayoutParams.TYPE_PHONE
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -48,15 +57,18 @@ class FloatingService : Service() {
 
     private fun startFg() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(
-            NotificationChannel("cyber", "CYBER ENGINE", NotificationManager.IMPORTANCE_LOW)
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel("cyber", "CYBER ENGINE", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
         val n = NotificationCompat.Builder(this, "cyber")
             .setContentTitle("CYBER ENGINE")
             .setContentText("Floating menu active")
             .setSmallIcon(R.drawable.ic_launcher)
             .setOngoing(true)
             .build()
+
         if (Build.VERSION.SDK_INT >= 34)
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         else
@@ -88,13 +100,15 @@ class FloatingService : Service() {
         private var ix = 0; private var iy = 0
         private var tx = 0f; private var ty = 0f
         private var moved = false
+
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
                     ix = lp.x; iy = lp.y; tx = e.rawX; ty = e.rawY; moved = false
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (e.rawX - tx).toInt(); val dy = (e.rawY - ty).toInt()
+                    val dx = (e.rawX - tx).toInt()
+                    val dy = (e.rawY - ty).toInt()
                     if (abs(dx) > 12 || abs(dy) > 12) moved = true
                     lp.x = ix + dx; lp.y = iy + dy
                     wm.updateViewLayout(v, lp)
@@ -148,7 +162,7 @@ class FloatingService : Service() {
     private fun runReplace() {
         Thread {
             val result = SoReplacer.replace(this, pkg)
-            runOnUiThread { Toast.makeText(this, result, Toast.LENGTH_LONG).show() }
+            main.post { Toast.makeText(this, result, Toast.LENGTH_LONG).show() }
         }.start()
     }
 
