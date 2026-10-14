@@ -11,7 +11,7 @@ object SoReplacer {
 
     fun replace(ctx: Context, pkg: String): String {
         val srcDir = extractAssets(ctx)
-        val files = srcDir.listFiles()?.filter { it.isFile && SKIP.none { e -> it.name.endsWith(e) } }
+        val files = srcDir.listFiles()?.filter { it.isFile && SKIP.none { s -> it.name.endsWith(s) } }
         if (files.isNullOrEmpty()) return "il2cpp-replace is empty"
 
         ShizukuHelper.exec("am force-stop $pkg")
@@ -30,21 +30,25 @@ object SoReplacer {
     }
 
     private fun extractAssets(ctx: Context): File {
-        val out = File(ctx.getExternalFilesDir(null), "il2cpp-replace").apply { mkdirs() }
-        ctx.assets.list(ASSET_DIR)?.forEach { name ->
-            if (SKIP.any { name.endsWith(it) }) return@forEach
-            ctx.assets.open("$ASSET_DIR/$name").use { i ->
-                File(out, name).outputStream().use { i.copyTo(it) }
+        val out = File(ctx.getExternalFilesDir(null), ASSET_DIR)
+        out.mkdirs()
+        val names = ctx.assets.list(ASSET_DIR) ?: emptyArray()
+        for (name in names) {
+            if (SKIP.any { name.endsWith(it) }) continue
+            ctx.assets.open("$ASSET_DIR/$name").use { input ->
+                File(out, name).outputStream().use { output -> input.copyTo(output) }
             }
         }
         return out
     }
 
-    private fun apkPath(pkg: String): String? =
-        ShizukuHelper.exec("pm path $pkg")
-            .lineSequence()
-            .map { it.trim().removePrefix("package:") }
-            .firstOrNull { it.endsWith("base.apk") }
+    private fun apkPath(pkg: String): String? {
+        for (line in ShizukuHelper.exec("pm path $pkg").split('\n')) {
+            val p = line.trim().removePrefix("package:")
+            if (p.endsWith("base.apk")) return p
+        }
+        return null
+    }
 
     private fun copyToLibDir(src: File, libDir: String): String {
         val dst = "$libDir/${src.name}"
@@ -57,12 +61,13 @@ object SoReplacer {
     /** Fallback for extractNativeLibs=false: overwrite the .so bytes inside base.apk. */
     private fun patchInApk(apk: String, src: File): String {
         val info = findZipEntry(apk, "lib/arm64/${src.name}") ?: return "not found in APK"
-        if (info.size != src.length())
+        if (info.size != src.length()) {
             return "size mismatch (${src.length()} vs ${info.size})"
+        }
         val out = ShizukuHelper.exec(
             "dd if=\"${src.absolutePath}\" of=\"$apk\" bs=1M " +
-            "iflag=skip_bytes,count_bytes oflag=seek_bytes " +
-            "skip=0 seek=${info.offset} count=${info.size} conv=notrunc 2>/dev/null && echo __OK__"
+                "iflag=skip_bytes,count_bytes oflag=seek_bytes " +
+                "skip=0 seek=${info.offset} count=${info.size} conv=notrunc 2>/dev/null && echo __OK__"
         )
         return if (out.contains("__OK__")) "patched in APK" else "failed"
     }
@@ -70,35 +75,45 @@ object SoReplacer {
     private class EntryInfo(val offset: Long, val size: Long)
 
     private fun findZipEntry(apkPath: String, entry: String): EntryInfo? {
-        val f = File(apkPath)
-        if (!f.canRead()) return null
-        RandomAccessFile(f, "r").use { raf ->
-            val len = raf.length()
-            val tailLen = minOf(len, 22L + 65535L).toInt()
+        val file = File(apkPath)
+        if (!file.canRead()) return null
+
+        RandomAccessFile(file, "r").use { raf ->
+            val total = raf.length()
+            val tailLen = minOf(total, 65557L).toInt()
             val tail = ByteArray(tailLen)
-            raf.seek(len - tailLen)
+            raf.seek(total - tailLen)
             raf.readFully(tail)
 
             var eocd = -1
-            for (i in tailLen - 22 downTo 0) {
+            var i = tailLen - 22
+            while (i >= 0) {
                 if (tail[i] == 0x50.toByte() && tail[i + 1] == 0x4b.toByte() &&
-                    tail[i + 2] == 0x05.toByte() && tail[i + 3] == 0x06.toByte()) { eocd = i; break }
+                    tail[i + 2] == 0x05.toByte() && tail[i + 3] == 0x06.toByte()
+                ) {
+                    eocd = i
+                    break
+                }
+                i--
             }
             if (eocd < 0) return null
 
             val count = le16(tail, eocd + 10)
-            var p = le32(tail, eocd + 16)
+            var pos = le32(tail, eocd + 16)
             val cd = ByteArray(46)
 
-            for (n in 0 until count) {
-                raf.seek(p)
+            var n = 0
+            while (n < count) {
+                raf.seek(pos)
                 raf.readFully(cd)
                 if (le32(cd, 0) != 0x02014b50L) break
+
                 val nameLen = le16(cd, 28)
                 val extraLen = le16(cd, 30)
                 val commentLen = le16(cd, 32)
                 val size = le32(cd, 24)
                 val localOff = le32(cd, 42)
+
                 val nameBytes = ByteArray(nameLen)
                 raf.readFully(nameBytes)
 
@@ -109,14 +124,25 @@ object SoReplacer {
                     val dataOff = localOff + 30 + le16(lh, 26) + le16(lh, 28)
                     return EntryInfo(dataOff, size)
                 }
-                p += 46 + nameLen + extraLen + commentLen
+
+                pos += 46 + nameLen + extraLen + commentLen
+                n++
             }
         }
         return null
     }
 
-    private fun le16(b: ByteArray, o: Int) = (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
-    private fun le32(b: ByteArray, o: Int): Long =
-        (b[o].toLong() and 0xFF) or ((b[o + 1].toLong() and 0xFF) shl 8) or
-        ((b[o + 2].toLong() and 0xFF) shl 16) or ((b[o + 3].toLong() and 0xFF) shl 24)
-}SoReplacer.kt
+    private fun le16(b: ByteArray, o: Int): Int {
+        val lo = b[o].toInt() and 0xFF
+        val hi = b[o + 1].toInt() and 0xFF
+        return lo or (hi shl 8)
+    }
+
+    private fun le32(b: ByteArray, o: Int): Long {
+        val b0 = b[o].toLong() and 0xFFL
+        val b1 = b[o + 1].toLong() and 0xFFL
+        val b2 = b[o + 2].toLong() and 0xFFL
+        val b3 = b[o + 3].toLong() and 0xFFL
+        return b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
+    }
+}
