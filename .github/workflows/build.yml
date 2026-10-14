@@ -5,11 +5,22 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEYSTORE_PATH: keystore.jks
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -21,20 +32,15 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Decode keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/keystore.jks
+      - name: Decode keystore (only if secrets exist)
+        if: env.KEYSTORE_BASE64 != ''
+        run: echo "$KEYSTORE_BASE64" | base64 -d > app/keystore.jks
 
       - name: Build release APK
-        env:
-          KEYSTORE_PATH: keystore.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK
@@ -42,3 +48,4 @@ jobs:
         with:
           name: CYBER-ENGINE-apk
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
